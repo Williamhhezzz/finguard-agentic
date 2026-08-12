@@ -1,0 +1,19 @@
+# Environments
+venv/
+.env
+
+# Data 
+*.csv
+data/
+backend/ingestion/*.csv
+backend/ml/data/*.csv
+
+# Terraform
+.terraform/
+terraform.tfstate
+terraform.tfstate.backup
+*.tfvars
+
+# Python
+__pycache__/
+*.pyc
