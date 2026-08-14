@@ -2,11 +2,15 @@ import json
 import time
 import pandas as pd
 from confluent_kafka import Producer
+import os
 
-# System Configuration
+# Dynamic System Configuration
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, '../..'))
+
 KAFKA_BROKER = 'localhost:9092' 
 TOPIC_NAME = 'finguard-all-events'
-DATA_PATH = '../../data/fraudTest.csv'
+DATA_PATH = os.path.join(PROJECT_ROOT, 'data', 'fraudTest.csv')
 
 def delivery_report(err, msg):
     """

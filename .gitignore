@@ -17,3 +17,6 @@ terraform.tfstate.backup
 # Python
 __pycache__/
 *.pyc
+
+# Machine Learning Artifacts
+artifacts/
