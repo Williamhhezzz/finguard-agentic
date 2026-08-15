@@ -112,7 +112,7 @@ def hitl_router(state: InvestigationState) -> Literal["human_review", "auto_reso
         return "auto_resolve"
 
 # Graph Compilation
-def build_investigator_graph():
+def build_investigator_graph(memory=None):
     workflow = StateGraph(InvestigationState)
 
     workflow.add_node("Context_Gatherer", context_agent)
@@ -134,7 +134,12 @@ def build_investigator_graph():
 
     workflow.add_edge("Human_Control_Center", END)
     workflow.add_edge("System_Resolved", END)
-
+    if memory is not None:
+        # If API calls this, compile with memory and pause before human
+        return workflow.compile(
+            checkpointer=memory, 
+            interrupt_before=["Human_Control_Center"]
+        )
     return workflow.compile()
 
 if __name__ == "__main__":
