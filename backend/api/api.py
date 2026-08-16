@@ -33,9 +33,9 @@ class TransactionPayload(BaseModel):
     velocity: float
 
 class HumanDecision(BaseModel):
-    decision: str  # "APPROVE" or "BLOCK"
+    decision: str 
 
-pending_escalations = {}
+pending_escalations: Dict[str, Any] = {}
 
 # The API Endpoints
 @app.post("/api/investigate")
@@ -45,9 +45,9 @@ async def trigger_investigation(payload: TransactionPayload):
     # We assign a unique thread_id to this specific investigation
     config = {"configurable": {"thread_id": payload.transaction_id}}
     
-    # Run the graph
-    print(f"\n[API] Initiating investigation for Thread: {payload.transaction_id}")
-    graph.invoke({"transaction": payload.model_dump()}, config)
+    # Run the graph asynchronously to prevent pipeline timeouts
+    print(f"\n[API] Initiating async investigation for Thread: {payload.transaction_id}")
+    await graph.ainvoke({"transaction": payload.model_dump()}, config)
     
     # Check if the graph paused (escalated) or finished (auto-resolved)
     state = graph.get_state(config)
@@ -77,9 +77,14 @@ async def resolve_escalation(transaction_id: str, human_input: HumanDecision):
     print(f"[API] Human override received for {transaction_id}: {human_input.decision}")
     
     # Inject the human decision into the state and resume the graph
-    graph.update_state(config, {"action_decision": human_input.decision, "resolved_by": "HUMAN",
-            "human_notes": f"Manual resolution: {human_input.decision}"}, as_node="Human_Control_Center")
-    graph.invoke(None, config)
+    graph.update_state(config, {
+        "action_decision": human_input.decision, 
+        "resolved_by": "HUMAN",
+        "human_notes": f"Manual resolution: {human_input.decision}"
+    }, as_node="Human_Control_Center")
+    
+    # Resume the graph asynchronously
+    await graph.ainvoke(None, config)
 
     pending_escalations.pop(transaction_id, None)
     

@@ -1,7 +1,10 @@
 import os
+import boto3
 import pandas as pd
 from typing import Dict, TypedDict, Any, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
+from botocore.config import Config
+from botocore.exceptions import ClientError
 from langgraph.graph import StateGraph, END
 from langchain_aws import ChatBedrock
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -36,10 +39,26 @@ except FileNotFoundError:
     print(f"Critical Error: Could not locate historical database at {DB_PATH}")
     exit(1)
 
-# Initialize the Bedrock Engine
-raw_llm = ChatBedrock(
-    model_id="anthropic.claude-3-haiku-20240307-v1:0",
+# Configure AWS Bedrock Client with Adaptive Retries
+bedrock_config = Config(
+    retries={
+        'max_attempts': 3,
+        'mode': 'adaptive'  # Automatically throttles requests based on AWS rate limit responses
+    },
+    connect_timeout=10,
+    read_timeout=15
+)
+
+bedrock_client = boto3.client(
+    service_name="bedrock-runtime",
     region_name="ap-southeast-1",
+    config=bedrock_config
+)
+
+# Initialize the Bedrock Engine using the custom client
+raw_llm = ChatBedrock(
+    client=bedrock_client,
+    model_id="anthropic.claude-3-haiku-20240307-v1:0",
     model_kwargs={"temperature": 0.0} 
 )
 
@@ -105,10 +124,31 @@ def reasoning_agent(state: InvestigationState) -> Dict[str, Any]:
             "ai_reasoning": result.reasoning,
             "action_decision": result.decision
         }
-    except Exception as e:
-        print(f"[System Failsafe] Structured output rejected: {e}")
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "ClientError")
+        print(f"[System Failsafe] AWS Bedrock ClientError ({error_code}): {e}")
         return {
-            "ai_reasoning": "System Failsafe: AI failed to adhere to strict Pydantic data schema.",
+            "ai_reasoning": f"System Failsafe (AWS Bedrock {error_code}): Upstream rate limit or API failure. Escalating for human review.",
+            "action_decision": "ESCALATE"
+        }
+    except ValidationError as e:
+        print(f"[System Failsafe] Schema validation failed: {e}")
+        return {
+            "ai_reasoning": "System Failsafe (Schema Validation): AI output failed to adhere to strict Pydantic data schema.",
+            "action_decision": "ESCALATE"
+        }
+    except Exception as e:
+        error_str = str(e)
+        print(f"[System Failsafe] Upstream failure: {error_str}")
+        
+        # Catch cases where LangChain wraps botocore's ThrottlingException
+        if "ThrottlingException" in error_str or "Too many requests" in error_str:
+            reason = "System Failsafe (AWS Bedrock Throttling): Rate limit reached (RPM quota exceeded). Escalating for manual review."
+        else:
+            reason = f"System Failsafe (Runtime Exception): {error_str[:120]}..."
+            
+        return {
+            "ai_reasoning": reason,
             "action_decision": "ESCALATE"
         }
 

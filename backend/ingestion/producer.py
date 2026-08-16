@@ -62,7 +62,7 @@ def stream_data():
         producer.poll(0)
         
         # Throttle the loop to simulate real-time human behavior (e.g., 0.5 seconds between swipes)
-        time.sleep(0.5)
+        time.sleep(3.0)
 
     # Force the engine to wait until all inflight messages are mathematically confirmed
     print("Flushing final events...")
