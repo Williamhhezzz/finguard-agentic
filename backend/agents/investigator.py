@@ -24,7 +24,9 @@ class InvestigationState(TypedDict):
     transaction: Dict[str, Any]    
     historical_context: str        
     ai_reasoning: str              
-    action_decision: str           
+    action_decision: str
+    resolved_by: str     # "AI" or "HUMAN"        
+    human_notes: str           
 
 # Database & Engine Initialization
 print("Booting Context Database Engine...")
@@ -43,6 +45,17 @@ raw_llm = ChatBedrock(
 
 # Bind the Pydantic schema directly to the AI Engine
 structured_llm = raw_llm.with_structured_output(InvestigationDecision)
+
+def human_control_node(state: InvestigationState) -> Dict[str, Any]:
+    decision = state.get("action_decision", "PENDING")
+    print(f"\n👤 [Human Authority] Analyst decision committed: {decision}")
+    print(f"   Context: Case closed via manual operator override.\n")
+    return {"resolved_by": "HUMAN"}
+
+def auto_resolved_node(state: InvestigationState) -> Dict[str, Any]:
+    print(f"\n🤖 [Autonomous Action] Engine executed: {state.get('action_decision')}")
+    print(f"   Reasoning: {state.get('ai_reasoning')}\n")
+    return {"resolved_by": "AI"}
 
 # ---------------------------------------------------------
 # The Agents (Nodes)
@@ -117,8 +130,8 @@ def build_investigator_graph(memory=None):
 
     workflow.add_node("Context_Gatherer", context_agent)
     workflow.add_node("Cognitive_Engine", reasoning_agent)
-    workflow.add_node("Human_Control_Center", lambda state: print("🚨 GRAPH PAUSED: Awaiting human input via dashboard..."))
-    workflow.add_node("System_Resolved", lambda state: print("✅ Threat neutralized or dismissed autonomously."))
+    workflow.add_node("Human_Control_Center", human_control_node)
+    workflow.add_node("System_Resolved", auto_resolved_node)
 
     workflow.set_entry_point("Context_Gatherer")
     workflow.add_edge("Context_Gatherer", "Cognitive_Engine")
