@@ -55,6 +55,9 @@ bedrock_client = boto3.client(
     config=bedrock_config
 )
 
+dynamodb = boto3.resource("dynamodb", region_name="ap-southeast-1")
+profiles_table = dynamodb.Table("finguard_profiles")
+
 # Initialize the Bedrock Engine using the custom client
 raw_llm = ChatBedrock(
     client=bedrock_client,
@@ -83,8 +86,27 @@ def context_agent(state: InvestigationState) -> Dict[str, Any]:
     target_cc = state['transaction']['cc_num']
     print(f"[Agent: Context] Querying historical truth for Card {target_cc}...")
     
+    # Primary Check: DynamoDB (The Dynamic Cloud Baseline)
+    try:
+        response = profiles_table.get_item(Key={"cc_num": target_cc})
+        profile = response.get("Item")
+        if profile:
+            avg_amt = float(profile.get("avg_amt", 0))
+            max_amt = float(profile.get("max_amt", 0))
+            cities = profile.get("frequent_cities", [])
+            job = profile.get("job", "Unknown")
+            
+            context = (
+                f"User Profile (Source: DynamoDB): Employed as {job}. "
+                f"Historical average transaction is ${avg_amt:.2f} (Max recorded: ${max_amt:.2f}). "
+                f"Frequently transacts in these cities: {', '.join(cities)}."
+            )
+            return {"historical_context": context}
+    except Exception as e:
+        print(f"[Agent: Context] DynamoDB lookup skipped: {e}")
+
+    # Fallback: Historical CSV
     user_history = historical_db[historical_db['cc_num'] == target_cc]
-    
     if user_history.empty:
         return {"historical_context": "No prior history exists for this user. Cold start. Treat with high suspicion."}
         
@@ -94,7 +116,7 @@ def context_agent(state: InvestigationState) -> Dict[str, Any]:
     user_job = user_history['job'].iloc[0]
     
     context = (
-        f"User Profile: Employed as {user_job}. "
+        f"User Profile (Source: Historical CSV): Employed as {user_job}. "
         f"Historical average transaction is ${avg_amt:.2f} (Max recorded: ${max_amt:.2f}). "
         f"Frequently transacts in these cities: {', '.join(common_cities)}."
     )
@@ -103,9 +125,14 @@ def context_agent(state: InvestigationState) -> Dict[str, Any]:
 def reasoning_agent(state: InvestigationState) -> Dict[str, Any]:
     print("[Agent: Reasoning] Executing cognitive analysis via AWS Bedrock...")
     
-    system_prompt = """You are a Tier 2 Fraud Investigation AI. 
+    system_prompt = """You are a Tier 2 Fraud Investigation AI.
     Analyze the transaction against the user's historical context.
-    Use the provided tool to output your final decision."""
+    Decision rules:
+    - APPROVE: Transaction matches user spend and location history.
+    - BLOCK: Extreme anomaly or clear fraudulent pattern (e.g. impossible velocity).
+    - ESCALATE: Cold start users (no history), transactions in new cities with moderate amounts ($100-$1000), or any ambiguous edge cases that require human judgment.
+
+    Use the provided schema to output your decision."""
 
     human_prompt = f"""
     Transaction Data (Flagged by Tier 1): {state['transaction']}
